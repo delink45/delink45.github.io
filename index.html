@@ -61,6 +61,8 @@ body[data-s="err"] #hint{color:var(--bad)}
 .tx{width:100%;min-height:64px;padding:12px 14px;border:1px solid var(--line);border-radius:12px;background:var(--card);font-size:17px;font-weight:600;overflow-wrap:anywhere;text-align:left}
 .tx.empty{border-style:dashed;color:#98a2b3;font-weight:500;font-size:14px}
 .tx.empty:before{content:"Teks ucapan Boss akan muncul di sini";}
+.raw{width:100%;margin:6px 0 0;padding:0 4px;color:var(--mute);font-size:12.5px;text-align:left;overflow-wrap:anywhere}
+.raw b{color:var(--ink)}
 
 .row{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin-top:14px}
 .btn{border:1px solid var(--line);background:#fff;color:var(--ink);border-radius:10px;padding:9px 16px;cursor:pointer;font-weight:700;font-size:13.5px}
@@ -96,6 +98,7 @@ body[data-s="err"] #hint{color:var(--bad)}
   <p id="hint"></p>
 
   <div class="tx empty" id="tx" aria-live="polite"></div>
+  <p class="raw" id="raw" hidden></p>
 
   <div class="row">
     <button class="btn red" id="bSend" type="button" hidden>Kirim sekarang</button>
@@ -118,7 +121,34 @@ try{var mm=/[#&]n=([A-Za-z0-9]+)/.exec(location.hash||'');if(mm)NONCE=mm[1];}cat
 var HAS_OPENER=false;
 try{HAS_OPENER=!!(window.opener&&!window.opener.closed);}catch(e){HAS_OPENER=false;}
 
-var rec=null,finalTxt='',interimTxt='',txt='',errCode='',sent=false,tmr=0;
+var rec=null,finalTxt='',interimTxt='',txt='',rawTxt='',errCode='',sent=false,tmr=0;
+
+/* Kamus koreksi salah dengar: istilah T-SPARK yang sering terdengar keliru oleh pengenal suara.
+   Dipasang pada teks asli; hasilnya dikirim sebagai 'text', teks asli ikut dikirim sebagai 'raw'. */
+var KAMUS=[
+  [/\b(?:c|ce|se|ci|si)\s*(?:p|pe)\s*u\s*(?:e\s*s|es|s)\b/gi,'CPUS'],
+  [/\bc\s*p\s*u\s*s\b/gi,'CPUS'],
+  [/\bcpu\s*(?:es|s)\b/gi,'CPUS'],
+  [/\bcepeues\b/gi,'CPUS'],
+  [/\b(?:es|s)\s*(?:be|b)\s*(?:e|ee)\b/gi,'SBE'],
+  [/\bunit\s+entri\b/gi,'Unit Entry'],
+  [/\b(?:yunit|junit)\s+(?:entri|entry)\b/gi,'Unit Entry'],
+  [/\b(?:revenu|revenyu|rivenyu|reveniu|revenew|rivenue)\b/gi,'revenue'],
+  [/\b(?:vendar|vender|fendor|fendar)\b/gi,'vendor'],
+  [/\b(?:es\s+a|esa)\b/gi,'SA'],
+  [/\b(?:achivement|acievement|ekivmen|akivmen|ekhivmen)\b/gi,'achievement'],
+  [/\b(?:t|ti)\s*[- ]\s*spark\b/gi,'T-SPARK']
+];
+function koreksi(t){
+  var o=t,i;
+  for(i=0;i<KAMUS.length;i++)o=o.replace(KAMUS[i][0],KAMUS[i][1]);
+  return o.replace(/\s+/g,' ').trim();
+}
+function setRaw(r,c){
+  var e=$('raw');
+  if(r&&c&&r!==c){e.innerHTML='';var b=document.createElement('b');b.textContent='Terdengar: ';e.appendChild(b);e.appendChild(document.createTextNode(r+' \u2192 dibaca sebagai di atas.'));e.hidden=false;}
+  else{e.hidden=true;e.textContent='';}
+}
 var BTN=['bSend','bAgain','bCopy'];
 var IZIN='Izin mikrofon ditolak. Klik ikon gembok di sebelah alamat halaman ini, ubah Mikrofon menjadi Izinkan, lalu ketuk bola mikrofon lagi.';
 var ERR={
@@ -156,7 +186,7 @@ function start(){
   clearT();
   if(rec){try{rec.abort();}catch(e){}rec=null;}
   txt='';finalTxt='';interimTxt='';errCode='';sent=false;
-  setTx('');show([]);
+  setTx('');setRaw('','');rawTxt='';show([]);
   if(!SR){fail('Browser ini tidak mendukung pengenalan suara. Buka lewat Google Chrome atau Microsoft Edge.','unsupported');return;}
   var r;
   try{r=new SR();}catch(e){fail('Pengenalan suara tidak bisa dimulai ('+(e&&e.name?e.name:'error')+').','start');return;}
@@ -197,7 +227,7 @@ function start(){
 }
 
 function gotText(t){
-  txt=t;setTx(t);
+  rawTxt=t;txt=koreksi(t);setTx(txt);setRaw(rawTxt,txt);
   if(!HAS_OPENER){
     setS('done','Teks terbaca','Halaman ini dibuka langsung (bukan dari T-SPARK AI), jadi tidak ada yang dikirimi. Ini hanya uji mikrofon.');
     show(['bCopy','bAgain']);return;
@@ -216,7 +246,7 @@ function doSend(){
   clearT();
   if(sent||!txt)return;
   sent=true;
-  if(post('text',{text:txt})){
+  if(post('text',{text:txt,raw:rawTxt})){
     setS('done','Terkirim ke T-SPARK AI','Jendela ini menutup sendiri.');
     show([]);
     setTimeout(function(){try{window.close();}catch(e){}},500);
