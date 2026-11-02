@@ -122,6 +122,7 @@ var HAS_OPENER=false;
 try{HAS_OPENER=!!(window.opener&&!window.opener.closed);}catch(e){HAS_OPENER=false;}
 
 var rec=null,finalTxt='',interimTxt='',txt='',rawTxt='',errCode='',sent=false,tmr=0;
+var heard=false,retried=0,readyTmr=0;   /* v26.52: heard=suara sempat terdengar; retried=jumlah ulang otomatis; readyTmr=batas tunggu audio siap */
 
 /* Kamus koreksi salah dengar: istilah T-SPARK yang sering terdengar keliru oleh pengenal suara.
    Dipasang pada teks asli; hasilnya dikirim sebagai 'text', teks asli ikut dikirim sebagai 'raw'. */
@@ -165,7 +166,7 @@ function setS(s,title,hint){
   $('st').textContent=title;$('hint').textContent=hint||'';
 }
 function show(list){BTN.forEach(function(id){$(id).hidden=list.indexOf(id)<0;});}
-function clearT(){if(tmr){clearInterval(tmr);tmr=0;}}
+function clearT(){if(tmr){clearInterval(tmr);tmr=0;}if(readyTmr){clearTimeout(readyTmr);readyTmr=0;}}
 function setTx(t){$('tx').textContent=t||'';$('tx').classList.toggle('empty',!t);}
 
 function post(type,extra){
@@ -183,26 +184,43 @@ function fail(msg,code){
   post('error',{message:msg,code:code||''});
 }
 
-function start(){
+function start(isRetry){
   clearT();
   if(rec){try{rec.abort();}catch(e){}rec=null;}
-  txt='';finalTxt='';interimTxt='';errCode='';sent=false;
+  txt='';finalTxt='';interimTxt='';errCode='';sent=false;heard=false;
+  if(!isRetry)retried=0;
   setTx('');setRaw('','');rawTxt='';show([]);
   if(!SR){fail('Browser ini tidak mendukung pengenalan suara. Buka lewat Google Chrome atau Microsoft Edge.','unsupported');return;}
   var r;
   try{r=new SR();}catch(e){fail('Pengenalan suara tidak bisa dimulai ('+(e&&e.name?e.name:'error')+').','start');return;}
   rec=r;
   r.lang='id-ID';r.interimResults=true;r.continuous=false;r.maxAlternatives=1;
-  setS('wait','Meminta izin mikrofon…','Bila browser bertanya, klik Izinkan.');
-  r.onstart=function(){if(rec!==r)return;setS('listen','Mendengarkan…','Silakan bicara. Berhenti sebentar kalau sudah selesai.');};
-  r.onspeechstart=function(){if(rec!==r)return;setS('hear','Terdengar suara…','');};
+  if(isRetry)setS('wait','Belum tertangkap, silakan ulangi','Tunggu tulisan "Mendengarkan…", lalu ucapkan lagi.');
+  else setS('wait','Meminta izin mikrofon…','Bila browser bertanya, klik Izinkan.');
+  /* v26.52: "Mendengarkan…" baru tampil setelah audio BENAR-BENAR mulai direkam (audiostart), bukan saat layanan suara baru mulai (start).
+     Kalau tampil terlalu dini, awal kata terpotong dan hasilnya kosong. */
+  var siap=function(){
+    if(rec!==r)return;
+    if(readyTmr){clearTimeout(readyTmr);readyTmr=0;}
+    if(document.body.getAttribute('data-s')==='listen'||document.body.getAttribute('data-s')==='hear')return;
+    setS('listen','Mendengarkan…',isRetry?'Tadi belum tertangkap. Silakan ucapkan lagi.':'Silakan bicara. Berhenti sebentar kalau sudah selesai.');
+  };
+  r.onstart=function(){
+    if(rec!==r)return;
+    if(isRetry)setS('wait','Belum tertangkap, menyiapkan ulang…','Tunggu tulisan "Mendengarkan…", lalu ucapkan lagi.');
+    else setS('wait','Menyiapkan mikrofon…','Tunggu sampai tulisan "Mendengarkan…" muncul, baru bicara.');
+    /* cadangan: bila browser tidak mengirim audiostart, tetap lanjut setelah 1,5 detik agar layar tidak macet */
+    readyTmr=setTimeout(siap,1500);
+  };
+  r.onaudiostart=siap;
+  r.onspeechstart=function(){if(rec!==r)return;heard=true;setS('hear','Terdengar suara…','');};
   r.onresult=function(ev){
     if(rec!==r)return;
     var f='',t='',i;
     for(i=0;i<ev.results.length;i++){
       if(ev.results[i].isFinal)f+=ev.results[i][0].transcript;else t+=ev.results[i][0].transcript;
     }
-    finalTxt=f;interimTxt=t;
+    finalTxt=f;interimTxt=t;heard=true;
     setTx((f+' '+t).replace(/\s+/g,' ').trim());
   };
   r.onerror=function(ev){
@@ -219,7 +237,9 @@ function start(){
     if(errCode)return;
     var t=(finalTxt||interimTxt||'').replace(/\s+/g,' ').trim();
     if(!t){
-      setS('idle','Tidak ada suara terdengar','Ketuk bola mikrofon, lalu bicara lebih dekat ke mikrofon.');
+      /* v26.52: suara sempat terdengar tetapi tidak ada teks -> dengarkan sekali lagi otomatis (maksimal 1x) */
+      if(heard&&retried<1){retried=1;start(true);return;}
+      setS('idle','Tidak ada suara terdengar','Ketuk bola mikrofon, tunggu tulisan "Mendengarkan…", lalu bicara lebih dekat ke mikrofon.');
       show(['bAgain']);return;
     }
     gotText(t);
@@ -280,15 +300,15 @@ function copy(){
 $('orb').onclick=function(){
   var s=document.body.getAttribute('data-s');
   if(rec&&(s==='listen'||s==='hear')){try{rec.stop();}catch(e){}return;}   /* selesai bicara sekarang */
-  start();
+  start(false);
 };
-$('bAgain').onclick=start;
+$('bAgain').onclick=function(){start(false);};
 $('bSend').onclick=doSend;
 $('bCopy').onclick=copy;
 window.addEventListener('pagehide',function(){try{if(rec)rec.abort();}catch(e){}});
 
 post('ready');
-start();
+start(false);
 })();
 </script>
 </body>
